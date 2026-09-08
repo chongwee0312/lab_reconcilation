@@ -428,6 +428,11 @@ def to_csv_bytes(df):
     return df.to_csv(index=False).encode('utf-8')
 
 
+def drop_seq_cols(df):
+    """Strip internal bookkeeping columns (inv_seq, lab_seq) before showing/downloading data."""
+    return df.drop(columns=[c for c in ('inv_seq', 'lab_seq') if c in df.columns])
+
+
 # --------------------------------------------------------------------------
 # UI
 # --------------------------------------------------------------------------
@@ -650,8 +655,11 @@ else:
     # Tab 1: Matched
     # ------------------------------------------------------------------
     with tabs[1]:
-        st.subheader("Matched records (same-day + next-day)")
-        matched_all = pd.concat([res['matched_same_day'], res['matched_next_day']], ignore_index=True)
+        st.subheader("Matched records (same-day + next-day + tag-on mismatches)")
+        matched_all = pd.concat(
+            [res['matched_same_day'], res['matched_next_day'], res['z_resolved']], ignore_index=True
+        )
+        matched_all = drop_seq_cols(matched_all)
         st.dataframe(matched_all, use_container_width=True)
         st.download_button(
             "Download matched records (CSV)", to_csv_bytes(matched_all),
@@ -668,10 +676,11 @@ else:
         else:
             st.caption("No tag-on billing discrepancies detected.")
         st.subheader("Resolved Tag-On Mismatches")
-        st.dataframe(res['z_resolved'], use_container_width=True)
+        z_resolved_display = drop_seq_cols(res['z_resolved'])
+        st.dataframe(z_resolved_display, use_container_width=True)
         if not res['z_resolved'].empty:
             st.download_button(
-                "Download resolved tag-on mismatches (CSV)", to_csv_bytes(res['z_resolved']),
+                "Download resolved tag-on mismatches (CSV)", to_csv_bytes(z_resolved_display),
                 file_name="resolved_tag_on_mismatches.csv", mime="text/csv"
             )
 
@@ -688,7 +697,7 @@ else:
                 st.markdown(f"**{date.date()}**")
                 st.dataframe(grp[['name_matched', 'clinic_id_no', 'clinic_test']], use_container_width=True, hide_index=True)
             st.download_button(
-                "Download unmatched clinic records (CSV)", to_csv_bytes(df),
+                "Download unmatched clinic records (CSV)", to_csv_bytes(drop_seq_cols(df)),
                 file_name="unmatched_clinic_records.csv", mime="text/csv"
             )
 
@@ -705,7 +714,7 @@ else:
                 st.markdown(f"**{date.date()}**")
                 st.dataframe(grp[['lab_name', 'lab_id_no', 'test']], use_container_width=True, hide_index=True)
             st.download_button(
-                "Download unmatched lab records (CSV)", to_csv_bytes(df),
+                "Download unmatched lab records (CSV)", to_csv_bytes(drop_seq_cols(df)),
                 file_name="unmatched_lab_records.csv", mime="text/csv"
             )
 
@@ -757,6 +766,6 @@ else:
     # ------------------------------------------------------------------
     with tabs[7]:
         st.subheader("Parsed lab data")
-        st.dataframe(res['inv_data'], use_container_width=True)
+        st.dataframe(drop_seq_cols(res['inv_data']), use_container_width=True)
         st.subheader("Parsed clinic record data (with matched lab amount)")
-        st.dataframe(res['lab_data_with_amount'], use_container_width=True)
+        st.dataframe(drop_seq_cols(res['lab_data_with_amount']), use_container_width=True)
