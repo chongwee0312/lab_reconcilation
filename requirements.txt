@@ -1,0 +1,7 @@
+streamlit>=1.38
+altair
+pandas
+numpy
+pdfplumber
+fuzzywuzzy
+python-Levenshtein
