@@ -5,3 +5,5 @@ numpy
 pdfplumber
 fuzzywuzzy
 python-Levenshtein
+openpyxl
+xlrd
