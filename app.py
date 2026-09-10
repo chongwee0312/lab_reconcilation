@@ -250,15 +250,19 @@ def parse_invoice_pdf(file_obj, password, unwanted_keywords):
     return inv_data, totals, warnings
 
 
-def parse_lab_csv(file_obj, test_rename, exclude_tests):
-    lab_data = pd.read_csv(file_obj)
+def parse_lab_file(file_obj, filename, test_rename, exclude_tests, sheet_name=0):
+    ext = filename.lower().rsplit('.', 1)[-1] if '.' in filename else ''
+    if ext in ('xlsx', 'xls'):
+        lab_data = pd.read_excel(file_obj, sheet_name=sheet_name)
+    else:
+        lab_data = pd.read_csv(file_obj)
     lab_data.columns = [col.lower().strip().replace(' ', '_').replace('.', '') for col in lab_data.columns]
 
     required = {'date', 'name', 'ic', 'package'}
     missing = required - set(lab_data.columns)
     if missing:
         raise ValueError(
-            f"Lab CSV is missing expected column(s): {', '.join(sorted(missing))}. "
+            f"Clinic record file is missing expected column(s): {', '.join(sorted(missing))}. "
             f"Found columns: {', '.join(lab_data.columns)}"
         )
 
@@ -269,6 +273,8 @@ def parse_lab_csv(file_obj, test_rename, exclude_tests):
     lab_data['clinic_test'] = lab_data['clinic_test'].str.strip().str.upper()
     lab_data['clinic_collected_date'] = pd.to_datetime(lab_data['clinic_collected_date'], dayfirst=True)
 
+    lab_data['clinic_id_no'] = lab_data['clinic_id_no'].astype(str)
+    
     lab_data = lab_data.assign(clinic_test=lab_data['clinic_test'].str.split(',')).explode('clinic_test')
     lab_data['clinic_test'] = lab_data['clinic_test'].str.strip()
     lab_data = lab_data.reset_index(drop=True)
@@ -448,7 +454,18 @@ with st.sidebar:
     pdf_password = st.text_input(
         "PDF Password (leave blank if the PDF isn't protected)", value="", type="password"
     )
-    lab_file = st.file_uploader("Clinic Record CSV", type=["csv"])
+    lab_file = st.file_uploader("Clinic Record (CSV or Excel)", type=["csv", "xlsx", "xls"])
+
+    lab_sheet_name = 0  # default: first sheet
+    if lab_file is not None and lab_file.name.lower().rsplit('.', 1)[-1] in ('xlsx', 'xls'):
+        try:
+            xls = pd.ExcelFile(io.BytesIO(lab_file.getvalue()))
+            if len(xls.sheet_names) > 1:
+                lab_sheet_name = st.selectbox("Excel sheet name", xls.sheet_names, index=0)
+            else:
+                lab_sheet_name = xls.sheet_names[0]
+        except Exception as e:
+            st.warning(f"Could not read sheet names from the Excel file: {e}")
 
     with st.expander("Advanced settings"):
         score_cutoff = st.slider("Fuzzy name match cutoff", 50, 100, 85)
@@ -494,9 +511,9 @@ if run_btn:
             st.error("No lab line items were extracted. Check the PDF password and file.")
             st.stop()
 
-        with st.spinner("Parsing clinic record CSV..."):
+        with st.spinner("Parsing clinic record file..."):
             lab_bytes = io.BytesIO(lab_file.getvalue())
-            lab_data = parse_lab_csv(lab_bytes, test_rename, exclude_tests)
+            lab_data = parse_lab_file(lab_bytes, lab_file.name, test_rename, exclude_tests, sheet_name=lab_sheet_name)
 
         with st.spinner("Matching clinic records to lab lines..."):
             name_mapping, name_unmatched = build_name_mapping(lab_data, inv_data, score_cutoff=score_cutoff)
