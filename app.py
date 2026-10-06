@@ -330,7 +330,7 @@ def build_name_mapping(lab_data, inv_data, score_cutoff=85):
         candidates = inv_by_id.loc[id_no]
         if clinic_name in candidates:
             continue  # exact match already, no remap needed
-        best_match, score = process.extractOne(clinic_name, candidates, scorer=fuzz.token_sort_ratio)
+        best_match, score = process.extractOne(clinic_name, candidates, scorer=fuzz.token_set_ratio)
         if score >= score_cutoff:
             mapping[clinic_name] = best_match
         else:
@@ -363,6 +363,30 @@ def build_id_mapping(lab_data, inv_data, score_cutoff=90):
     return mapping, unmatched
 
 
+def build_test_mapping(lab_data, inv_data, score_cutoff=85):
+    """
+    Fuzzy-match clinic_test against the lab's test codes for typos in the
+    clinic's own data entry. Matched against the full set of test codes seen
+    on the invoice, since test codes are a shared vocabulary (not person-
+    specific) -- unlike names/IDs, there's no reliable per-person anchor to
+    narrow the candidate pool, and narrowing wouldn't help here anyway.
+    """
+    mapping = {}
+    unmatched = []
+    inv_tests = inv_data['test'].dropna().unique()
+    if len(inv_tests) == 0:
+        return mapping, unmatched
+    for clinic_test in lab_data['clinic_test'].dropna().unique():
+        if clinic_test in inv_tests:
+            continue  # exact match already, no remap needed
+        best_match, score = process.extractOne(clinic_test, inv_tests, scorer=fuzz.token_sort_ratio)
+        if score >= score_cutoff:
+            mapping[clinic_test] = best_match
+        else:
+            unmatched.append((clinic_test, best_match, score))
+    return mapping, unmatched
+
+
 def match_with_date_shift(lab_data, inv_data):
     lab = lab_data.copy()
     inv = inv_data.copy()
@@ -371,7 +395,7 @@ def match_with_date_shift(lab_data, inv_data):
 
     # Stage 1: same-day outer match
     same_day = lab.merge(
-        inv, left_on=['clinic_collected_date', 'name_matched', 'id_matched', 'clinic_test'],
+        inv, left_on=['clinic_collected_date', 'name_matched', 'id_matched', 'test_matched'],
         right_on=['lab_collected_date', 'lab_name', 'lab_id_no', 'test'],
         how='outer', indicator=True
     )
@@ -386,7 +410,7 @@ def match_with_date_shift(lab_data, inv_data):
     if len(unmatched_lab) and len(unmatched_inv):
         unmatched_lab['collect_date_shifted'] = unmatched_lab['clinic_collected_date'] + pd.Timedelta(days=1)
         next_day = unmatched_lab.merge(
-            unmatched_inv, left_on=['collect_date_shifted', 'name_matched', 'id_matched', 'clinic_test'],
+            unmatched_inv, left_on=['collect_date_shifted', 'name_matched', 'id_matched', 'test_matched'],
             right_on=['lab_collected_date', 'lab_name', 'lab_id_no', 'test'],
             how='outer', indicator=True
         )
@@ -408,7 +432,7 @@ def flag_z_mismatches(still_unmatched_lab, still_unmatched_inv):
     inv = still_unmatched_inv.copy()  # restricted to leftover lab rows only
     inv['test_stripped'] = inv['test'].apply(strip_z)
     lab = still_unmatched_lab.copy()
-    lab['test_stripped'] = lab['clinic_test'].apply(strip_z)
+    lab['test_stripped'] = lab['test_matched'].apply(strip_z)
 
     resolved_rows = []
     truly_unmatched_lab_rows = []
@@ -421,7 +445,7 @@ def flag_z_mismatches(still_unmatched_lab, still_unmatched_inv):
             (inv['lab_id_no'] == row['id_matched']) &
             (inv['lab_collected_date'].isin([row['clinic_collected_date'], row['clinic_collected_date'] + pd.Timedelta(days=1)])) &
             (inv['test_stripped'] == row['test_stripped']) &
-            (inv['test'].str.upper() != row['clinic_test'].strip().upper()) &
+            (inv['test'].str.upper() != row['test_matched'].strip().upper()) &
             (~inv['inv_seq'].isin(used_inv_seq))
         ]
         if candidates.empty:
@@ -430,7 +454,7 @@ def flag_z_mismatches(still_unmatched_lab, still_unmatched_inv):
 
         inv_row = candidates.iloc[0]
         used_inv_seq.add(inv_row['inv_seq'])
-        lab_has_z = row['clinic_test'].strip().upper().startswith('Z')
+        lab_has_z = row['test_matched'].strip().upper().startswith('Z')
         inv_has_z = inv_row['test'].strip().upper().startswith('Z')
         clinic_name, clinic_id_no, cdate = row['name_matched'], row['clinic_id_no'], row['clinic_collected_date'].date()
 
@@ -497,6 +521,7 @@ with st.sidebar:
     with st.expander("Advanced settings"):
         score_cutoff = st.slider("Fuzzy name match cutoff", 50, 100, 85)
         id_score_cutoff = st.slider("Fuzzy ID match cutoff", 50, 100, 90)
+        test_score_cutoff = st.slider("Fuzzy clinic test match cutoff", 50, 100, 85)
         exclude_tests_text = st.text_input(
             "Exclude tests (comma separated)", value=", ".join(DEFAULT_EXCLUDE_TESTS)
         )
@@ -551,6 +576,9 @@ if run_btn:
             id_mapping, id_unmatched = build_id_mapping(lab_data, inv_data, score_cutoff=id_score_cutoff)
             lab_data['id_matched'] = lab_data['clinic_id_no'].replace(id_mapping)
 
+            test_mapping, test_unmatched = build_test_mapping(lab_data, inv_data, score_cutoff=test_score_cutoff)
+            lab_data['test_matched'] = lab_data['clinic_test'].replace(test_mapping)
+
             matched_same_day, matched_next_day, still_unmatched_lab, still_unmatched_inv = match_with_date_shift(
                 lab_data, inv_data
             )
@@ -576,6 +604,7 @@ if run_btn:
             inv_data=inv_data, lab_data=lab_data, totals=totals, inv_warnings=inv_warnings,
             name_mapping=name_mapping, name_unmatched=name_unmatched,
             id_mapping=id_mapping, id_unmatched=id_unmatched,
+            test_mapping=test_mapping, test_unmatched=test_unmatched,
             matched_same_day=matched_same_day, matched_next_day=matched_next_day,
             z_resolved=z_resolved, tag_on_notes=tag_on_notes,
             truly_unmatched_lab=truly_unmatched_lab, truly_unmatched_inv=truly_unmatched_inv,
@@ -607,7 +636,7 @@ else:
 
     tabs = st.tabs([
         "Summary", "Matched", "Tag-On Mismatches", "Unmatched \u2013 Clinic", "Unmatched \u2013 Lab",
-        "Name Typo", "ID Typo", "Raw Data",
+        "Name Typo", "ID Typo", "Test Typo", "Raw Data",
     ])
 
     # ------------------------------------------------------------------
@@ -739,7 +768,7 @@ else:
         else:
             for date, grp in df.sort_values('clinic_collected_date').groupby('clinic_collected_date'):
                 st.markdown(f"**{date.date()}**")
-                st.dataframe(grp[['name_matched', 'clinic_id_no', 'clinic_test']], use_container_width=True, hide_index=True)
+                st.dataframe(grp[['name_matched', 'clinic_id_no', 'clinic_test', 'test_matched']], use_container_width=True, hide_index=True)
             st.download_button(
                 "Download unmatched clinic records (CSV)", to_csv_bytes(drop_seq_cols(df)),
                 file_name="unmatched_clinic_records.csv", mime="text/csv"
@@ -806,9 +835,31 @@ else:
             st.caption("None.")
 
     # ------------------------------------------------------------------
-    # Tab 7: Raw Data
+    # Tab 7: Test Typo
     # ------------------------------------------------------------------
     with tabs[7]:
+        st.subheader("Fuzzy test mapping applied (clinic test \u2192 lab test)")
+        st.caption("Matched against all test codes seen on the lab invoice, to catch typos in the clinic's own data entry.")
+        if res['test_mapping']:
+            st.dataframe(
+                pd.DataFrame(res['test_mapping'].items(), columns=['clinic_test', 'mapped_to_lab_test']),
+                use_container_width=True,
+            )
+        else:
+            st.caption("No fuzzy test remapping was needed.")
+        st.subheader("Clinic tests that could not be confidently matched")
+        if res['test_unmatched']:
+            st.dataframe(
+                pd.DataFrame(res['test_unmatched'], columns=['clinic_test', 'closest_lab_test', 'score']),
+                use_container_width=True,
+            )
+        else:
+            st.caption("None.")
+
+    # ------------------------------------------------------------------
+    # Tab 8: Raw Data
+    # ------------------------------------------------------------------
+    with tabs[8]:
         st.subheader("Parsed lab data")
         st.dataframe(drop_seq_cols(res['inv_data']), use_container_width=True)
         st.subheader("Parsed clinic record data (with matched lab amount)")
