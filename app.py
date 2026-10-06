@@ -281,11 +281,22 @@ def parse_invoice_pdf(file_obj, password, unwanted_keywords):
 
 def parse_lab_file(file_obj, filename, test_rename, exclude_tests, sheet_name=0):
     ext = filename.lower().rsplit('.', 1)[-1] if '.' in filename else ''
-    if ext in ('xlsx', 'xls'):
-        lab_data = pd.read_excel(file_obj, sheet_name=sheet_name)
-    else:
-        lab_data = pd.read_csv(file_obj)
-    lab_data.columns = [col.lower().strip().replace(' ', '_').replace('.', '') for col in lab_data.columns]
+    is_excel = ext in ('xlsx', 'xls')
+    
+    def _read(**kw):
+        if is_excel:
+            return pd.read_excel(file_obj, sheet_name=sheet_name, **kw)
+        return pd.read_csv(file_obj, **kw)
+    
+    def _norm(col):
+        return str(col).lower().strip().replace(' ', '_').replace('.', '')
+    
+    # Peek at the header so the IC column can be read as text (keeps leading zeros)
+    header = _read(nrows=0)
+    file_obj.seek(0)
+    ic_cols = [c for c in header.columns if _norm(c) == 'ic']
+    lab_data = _read(dtype={c: str for c in ic_cols})
+    lab_data.columns = [_norm(col) for col in lab_data.columns]
 
     required = {'hs_date', 'name', 'ic', 'package'}
     missing = required - set(lab_data.columns)
@@ -298,6 +309,9 @@ def parse_lab_file(file_obj, filename, test_rename, exclude_tests, sheet_name=0)
     lab_data = lab_data[['hs_date', 'name', 'ic', 'package']]
     lab_data.columns = ['clinic_collected_date', 'clinic_name', 'clinic_id_no', 'clinic_test']
 
+    lab_data['clinic_id_no'] = (
+        lab_data['clinic_id_no'].astype(str).str.strip().str.replace(r'\.0$', '', regex=True)
+    )
     lab_data['clinic_name'] = lab_data['clinic_name'].str.strip()
     lab_data['clinic_test'] = lab_data['clinic_test'].str.strip().str.upper()
     lab_data['clinic_test'] = lab_data['clinic_test'].str.replace(r'\s*\+\s*BCA\b', '', regex=True)
