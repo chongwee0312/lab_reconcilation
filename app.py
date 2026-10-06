@@ -18,6 +18,7 @@ import streamlit as st
 from fuzzywuzzy import fuzz, process
 import pdfplumber
 import logging
+from importlib.metadata import version
 
 logging.getLogger("pdfminer").setLevel(logging.ERROR)
 
@@ -262,8 +263,8 @@ def parse_invoice_pdf(file_obj, password, unwanted_keywords):
                         totals['total_payable_amount'] = payable
                 lines.append(stripped)
 
-    import pdfplumber, pdfminer
-    st.write(pdfplumber.__version__, pdfminer.__version__)   # use print() in the notebook
+    # inside parse_invoice_pdf, right after the loop that fills `lines`:
+    st.write("pdfplumber", version("pdfplumber"), "pdfminer.six", version("pdfminer.six"))
     for l in lines:
         if 'MURIYAM' in l or 'DONI' in l or l.startswith(('D61400', '0002')):
             st.code(l)
