@@ -262,6 +262,12 @@ def parse_invoice_pdf(file_obj, password, unwanted_keywords):
                         totals['total_payable_amount'] = payable
                 lines.append(stripped)
 
+    import pdfplumber, pdfminer
+    st.write(pdfplumber.__version__, pdfminer.__version__)   # use print() in the notebook
+    for l in lines:
+        if 'MURIYAM' in l or 'DONI' in l or l.startswith(('D61400', '0002')):
+            st.code(l)
+            
     cleaned_lines = clean_lines(lines, unwanted_keywords)
     inv_data, warnings = build_dataframe(cleaned_lines)
     inv_data = inv_data.rename(columns={'date': 'lab_collected_date', 'id_no': 'lab_id_no', 'inv_name': 'lab_name'})
