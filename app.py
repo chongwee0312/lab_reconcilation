@@ -31,7 +31,7 @@ LAB_NO_RE = re.compile(r'^[A-Z]{2,4}\d{6,10}$')
 DATE_RE = re.compile(r'^(?:\d{2}\.\d{2}\.\d{4}|\d{4}-\d{2}-\d{2})$')
 HVA_RE = re.compile(r'^[A-Z]{2}-\d{4,8}-')
 SUFFIX_RE = re.compile(r'^[A-Z]{2,4}\d{4,9}$')
-MRN_NOISE_RE = re.compile(r'^(?:D\d{5}|\d{4})$')
+MRN_FRAG_RE = re.compile(r'^(?:[A-Z]\d{5}|\d{4})$')
 
 DEFAULT_UNWANTED_KEYWORDS = [
     'Labs', 'LABS', 'Registration', 'Jalan', 'Iskandar', '560 1042', '.com', 'INVOICE', 'SST No', 'Bill To',
@@ -204,11 +204,13 @@ def parse_records(lines):
             i = j
             continue
 
-        # 3. stray token: word-shaped => wrapped name overflow, else truly orphaned
+        # 3. stray token
         if records and is_probable_name_word(tok):
-            records[-1]['inv_name'] += ' ' + tok
-        elif MRN_NOISE_RE.match(tok):
-            pass
+            records[-1]['inv_name'] += ' ' + tok          # wrapped name overflow
+        elif (records and MRN_FRAG_RE.match(tok) and not records[-1].get('frag')
+              and (records[-1]['hva_no'] is None or records[-1]['hva_no'].endswith('-'))):
+            records[-1]['id_no'] += tok                   # wrapped tail of the MRN
+            records[-1]['frag'] = True
         else:
             unresolved.append(tok)
         i += 1
