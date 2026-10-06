@@ -271,7 +271,7 @@ def parse_lab_file(file_obj, filename, test_rename, exclude_tests, sheet_name=0)
         lab_data = pd.read_csv(file_obj)
     lab_data.columns = [col.lower().strip().replace(' ', '_').replace('.', '') for col in lab_data.columns]
 
-    required = {'date', 'name', 'ic', 'package'}
+    required = {'hs_date', 'name', 'ic', 'package'}
     missing = required - set(lab_data.columns)
     if missing:
         raise ValueError(
