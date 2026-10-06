@@ -146,31 +146,38 @@ def parse_records(lines):
     n = len(tokens)
     records, unresolved = [], []
     i = 0
+
     while i < n:
         tok = tokens[i]
+
         # 1. complete a dangling hva_no suffix on the previous record
         if records and records[-1]['hva_no'] and records[-1]['hva_no'].endswith('-') and is_hva_suffix(tok):
             records[-1]['hva_no'] += tok
             i += 1
             continue
+
         # 2. start a new record
         if is_record_start(tokens, i):
             lab_no, id_no = tokens[i], tokens[i + 1]
             j = i + 2
+
             hva_no = None
             if j < n and looks_like_hva(tokens[j]):
                 hva_no = tokens[j]
                 j += 1
+
             name_tokens = []
             while j < n and not is_date(tokens[j]):
                 if is_record_start(tokens, j):
                     break
                 name_tokens.append(tokens[j])
                 j += 1
+
             if j >= n or not is_date(tokens[j]):
-                unresolved.extend(tokens[i:j + 1] if j < n else tokens[i:j])
+                unresolved.extend(tokens[i:j+1] if j < n else tokens[i:j])
                 i += 1
                 continue
+
             try:
                 date = tokens[j]; j += 1
                 test = tokens[j]; j += 1
@@ -185,6 +192,7 @@ def parse_records(lines):
                 unresolved.append(lab_no)
                 i += 1
                 continue
+
             records.append({
                 'lab_no': lab_no, 'id_no': id_no, 'hva_no': hva_no,
                 'inv_name': ' '.join(name_tokens), 'date': date, 'test': test,
@@ -194,6 +202,7 @@ def parse_records(lines):
             })
             i = j
             continue
+
         # 3. stray token: word-shaped => wrapped name overflow, else truly orphaned
         if records and is_probable_name_word(tok):
             records[-1]['inv_name'] += ' ' + tok
@@ -202,6 +211,7 @@ def parse_records(lines):
         else:
             unresolved.append(tok)
         i += 1
+
     return records, unresolved
 
 def build_dataframe(lines):
