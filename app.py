@@ -41,7 +41,7 @@ DEFAULT_UNWANTED_KEYWORDS = [
 ]
 
 DEFAULT_TEST_RENAME = {'PAP SMEAR': 'H408'}
-DEFAULT_EXCLUDE_TESTS = ['F/UP URINE']
+DEFAULT_EXCLUDE_TESTS = ['F/UP URINE', 'BREAST U/S']
 
 
 # --------------------------------------------------------------------------
