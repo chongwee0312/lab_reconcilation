@@ -538,6 +538,8 @@ if run_btn:
             inv_data, totals, inv_warnings = parse_invoice_pdf(
                 inv_bytes, pdf_password, DEFAULT_UNWANTED_KEYWORDS
             )
+            chk = inv_data[inv_data['lab_name'].str.contains('MURIYAM|DONI', na=False)]
+            st.write(chk[['lab_no', 'lab_id_no', 'lab_name', 'hva_no', 'test']])
         if inv_data.empty:
             st.error("No lab line items were extracted. Check the PDF password and file.")
             st.stop()
