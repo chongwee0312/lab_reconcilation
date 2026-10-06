@@ -279,7 +279,7 @@ def parse_lab_file(file_obj, filename, test_rename, exclude_tests, sheet_name=0)
             f"Found columns: {', '.join(lab_data.columns)}"
         )
 
-    lab_data = lab_data[['hs_date', 'name', 'ic', 'package']]
+    lab_data = lab_data[['date', 'name', 'ic', 'package']]
     lab_data.columns = ['clinic_collected_date', 'clinic_name', 'clinic_id_no', 'clinic_test']
 
     lab_data['clinic_name'] = lab_data['clinic_name'].str.strip()
