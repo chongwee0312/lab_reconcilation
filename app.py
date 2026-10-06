@@ -29,7 +29,7 @@ st.set_page_config(page_title="Clinic \u2194 Lab Reconciliation", layout="wide")
 LAB_NO_RE = re.compile(r'^[A-Z]{2,4}\d{6,10}$')
 DATE_RE = re.compile(r'^(?:\d{2}\.\d{2}\.\d{4}|\d{4}-\d{2}-\d{2})$')
 HVA_RE = re.compile(r'^[A-Z]{2}-\d{4,8}-')
-SUFFIX_RE = re.compile(r'^[A-Z]{2,4}\d{4,9}$')
+SUFFIX_RE = re.compile(r'^[A-Z]{0,4}\d{4,9}$')
 
 DEFAULT_UNWANTED_KEYWORDS = [
     'Labs', 'LABS', 'Registration', 'Jalan', 'Iskandar', '560 1042', '.com', 'INVOICE', 'SST No', 'Bill To',
@@ -111,7 +111,7 @@ def is_id_no(tok):
     if not tok.isalnum():
         return False
     if tok.isdigit():
-        return len(tok) == 12
+        return 8 <= len(tok) <= 12
     return 6 <= len(tok) <= 12 and any(c.isdigit() for c in tok) and any(c.isalpha() for c in tok)
 
 
