@@ -264,12 +264,6 @@ def parse_invoice_pdf(file_obj, password, unwanted_keywords):
                     if payable is not None:
                         totals['total_payable_amount'] = payable
                 lines.append(stripped)
-
-    # inside parse_invoice_pdf, right after the loop that fills `lines`:
-    st.write("pdfplumber", version("pdfplumber"), "pdfminer.six", version("pdfminer.six"))
-    for l in lines:
-        if 'MURIYAM' in l or 'DONI' in l or l.startswith(('D61400', '0002')):
-            st.code(l)
             
     cleaned_lines = clean_lines(lines, unwanted_keywords)
     inv_data, warnings = build_dataframe(cleaned_lines)
@@ -540,8 +534,6 @@ if run_btn:
             inv_data, totals, inv_warnings = parse_invoice_pdf(
                 inv_bytes, pdf_password, DEFAULT_UNWANTED_KEYWORDS
             )
-            chk = inv_data[inv_data['lab_name'].str.contains('MURIYAM|DONI', na=False)]
-            st.write(chk[['lab_no', 'lab_id_no', 'lab_name', 'hva_no', 'test']])
         if inv_data.empty:
             st.error("No lab line items were extracted. Check the PDF password and file.")
             st.stop()
