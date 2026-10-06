@@ -127,6 +127,18 @@ def tokenize_lines(lines):
             tokens.extend(line.split())
     return tokens
 
+def parse_invoice_date(s):
+    """
+    Parse a single invoice date token using its matching explicit format.
+    Avoids format='mixed' + dayfirst=True, which can misparse unambiguous
+    YYYY-MM-DD strings (e.g. reading month/day as day/month).
+    """
+    s = str(s).strip()
+    if re.match(r'^\d{4}-\d{2}-\d{2}$', s):
+        return pd.to_datetime(s, format='%Y-%m-%d')
+    if re.match(r'^\d{2}\.\d{2}\.\d{4}$', s):
+        return pd.to_datetime(s, format='%d.%m.%Y')
+    return pd.to_datetime(s)
 
 def parse_records(lines):
     tokens = tokenize_lines(lines)
@@ -189,42 +201,22 @@ def parse_records(lines):
         i += 1
     return records, unresolved
 
-
-def _parse_invoice_date(s):
-    """
-    Parse a single invoice date token using its matching explicit format.
-    Avoids pandas' format='mixed' + dayfirst=True, which can misparse
-    unambiguous YYYY-MM-DD strings (e.g. reading month/day as day/month).
-    """
-    s = str(s).strip()
-    if re.match(r'^\d{4}-\d{2}-\d{2}$', s):
-        return pd.to_datetime(s, format='%Y-%m-%d')
-    if re.match(r'^\d{2}\.\d{2}\.\d{4}$', s):
-        return pd.to_datetime(s, format='%d.%m.%Y')
-    return pd.to_datetime(s)  # fallback: best-effort inference
-
-
 def build_dataframe(lines):
-    """Returns (dataframe, list_of_warning_strings)."""
     records, unresolved = parse_records(lines)
-    warnings = []
     df = pd.DataFrame(records)
-    if df.empty:
-        warnings.append("No lab line items could be parsed from this PDF.")
-        return df, warnings
+
     for c in ['unit_price', 'gross_amount', 'discount', 'tax_amount', 'total_amount']:
         df[c] = df[c].str.replace(',', '').astype(float)
     df['qty'] = df['qty'].astype(int)
-    df['date'] = df['date'].apply(_parse_invoice_date)
+    df['date'] = df['date'].apply(parse_invoice_date)   # <-- replaces the hardcoded format line
+
     dangling = df[df['hva_no'].astype(str).str.endswith('-', na=False)]
     if not dangling.empty:
-        warnings.append(
-            f"{len(dangling)} records still have an incomplete hva_no: "
-            + ", ".join(dangling['lab_no'].tolist())
-        )
+        print(f'Warning: {len(dangling)} records still have an incomplete hva_no:')
+        print(dangling[['lab_no', 'hva_no']])
     if unresolved:
-        warnings.append(f"{len(unresolved)} tokens unresolved: {unresolved}")
-    return df, warnings
+        print(f'Warning: {len(unresolved)} tokens unresolved: {unresolved}')
+    return df
 
 
 # --------------------------------------------------------------------------
@@ -280,7 +272,7 @@ def parse_lab_file(file_obj, filename, test_rename, exclude_tests, sheet_name=0)
             f"Found columns: {', '.join(lab_data.columns)}"
         )
 
-    lab_data = lab_data[['date', 'name', 'ic', 'package']]
+    lab_data = lab_data[['hs_date', 'name', 'ic', 'package']]
     lab_data.columns = ['clinic_collected_date', 'clinic_name', 'clinic_id_no', 'clinic_test']
 
     lab_data['clinic_name'] = lab_data['clinic_name'].str.strip()
