@@ -27,7 +27,7 @@ st.set_page_config(page_title="Clinic \u2194 Lab Reconciliation", layout="wide")
 # Regex / constants
 # --------------------------------------------------------------------------
 LAB_NO_RE = re.compile(r'^[A-Z]{2,4}\d{6,10}$')
-DATE_RE = re.compile(r'^\d{2}\.\d{2}\.\d{4}$')
+DATE_RE = re.compile(r'^(?:\d{2}\.\d{2}\.\d{4}|\d{4}-\d{2}-\d{2})$')
 HVA_RE = re.compile(r'^[A-Z]{2}-\d{4,8}-')
 SUFFIX_RE = re.compile(r'^[A-Z]{2,4}\d{4,9}$')
 
@@ -190,6 +190,20 @@ def parse_records(lines):
     return records, unresolved
 
 
+def _parse_invoice_date(s):
+    """
+    Parse a single invoice date token using its matching explicit format.
+    Avoids pandas' format='mixed' + dayfirst=True, which can misparse
+    unambiguous YYYY-MM-DD strings (e.g. reading month/day as day/month).
+    """
+    s = str(s).strip()
+    if re.match(r'^\d{4}-\d{2}-\d{2}$', s):
+        return pd.to_datetime(s, format='%Y-%m-%d')
+    if re.match(r'^\d{2}\.\d{2}\.\d{4}$', s):
+        return pd.to_datetime(s, format='%d.%m.%Y')
+    return pd.to_datetime(s)  # fallback: best-effort inference
+
+
 def build_dataframe(lines):
     """Returns (dataframe, list_of_warning_strings)."""
     records, unresolved = parse_records(lines)
@@ -201,7 +215,7 @@ def build_dataframe(lines):
     for c in ['unit_price', 'gross_amount', 'discount', 'tax_amount', 'total_amount']:
         df[c] = df[c].str.replace(',', '').astype(float)
     df['qty'] = df['qty'].astype(int)
-    df['date'] = pd.to_datetime(df['date'], format='%d.%m.%Y')
+    df['date'] = df['date'].apply(_parse_invoice_date)
     dangling = df[df['hva_no'].astype(str).str.endswith('-', na=False)]
     if not dangling.empty:
         warnings.append(
@@ -273,8 +287,6 @@ def parse_lab_file(file_obj, filename, test_rename, exclude_tests, sheet_name=0)
     lab_data['clinic_test'] = lab_data['clinic_test'].str.strip().str.upper()
     lab_data['clinic_collected_date'] = pd.to_datetime(lab_data['clinic_collected_date'], dayfirst=True)
 
-    lab_data['clinic_id_no'] = lab_data['clinic_id_no'].astype(str)
-    
     lab_data = lab_data.assign(clinic_test=lab_data['clinic_test'].str.split(',')).explode('clinic_test')
     lab_data['clinic_test'] = lab_data['clinic_test'].str.strip()
     lab_data = lab_data.reset_index(drop=True)
