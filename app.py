@@ -202,21 +202,28 @@ def parse_records(lines):
     return records, unresolved
 
 def build_dataframe(lines):
+    """Returns (dataframe, list_of_warning_strings)."""
     records, unresolved = parse_records(lines)
+    warnings = []
     df = pd.DataFrame(records)
+    if df.empty:
+        warnings.append("No lab line items could be parsed from this PDF.")
+        return df, warnings
 
     for c in ['unit_price', 'gross_amount', 'discount', 'tax_amount', 'total_amount']:
         df[c] = df[c].str.replace(',', '').astype(float)
     df['qty'] = df['qty'].astype(int)
-    df['date'] = df['date'].apply(parse_invoice_date)   # <-- replaces the hardcoded format line
+    df['date'] = df['date'].apply(parse_invoice_date)
 
     dangling = df[df['hva_no'].astype(str).str.endswith('-', na=False)]
     if not dangling.empty:
-        print(f'Warning: {len(dangling)} records still have an incomplete hva_no:')
-        print(dangling[['lab_no', 'hva_no']])
+        warnings.append(
+            f"{len(dangling)} records still have an incomplete hva_no: "
+            + ", ".join(dangling['lab_no'].tolist())
+        )
     if unresolved:
-        print(f'Warning: {len(unresolved)} tokens unresolved: {unresolved}')
-    return df
+        warnings.append(f"{len(unresolved)} tokens unresolved: {unresolved}")
+    return df, warnings
 
 
 # --------------------------------------------------------------------------
