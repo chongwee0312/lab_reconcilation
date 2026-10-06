@@ -300,6 +300,7 @@ def parse_lab_file(file_obj, filename, test_rename, exclude_tests, sheet_name=0)
 
     lab_data['clinic_name'] = lab_data['clinic_name'].str.strip()
     lab_data['clinic_test'] = lab_data['clinic_test'].str.strip().str.upper()
+    lab_data['clinic_test'] = lab_data['clinic_test'].str.replace(r'\s*\+\s*BCA\b', '', regex=True)
     lab_data['clinic_collected_date'] = pd.to_datetime(lab_data['clinic_collected_date'], dayfirst=True)
 
     lab_data = lab_data.assign(clinic_test=lab_data['clinic_test'].str.split(',')).explode('clinic_test')
@@ -489,7 +490,9 @@ def drop_seq_cols(df):
     """Strip internal bookkeeping columns (inv_seq, lab_seq) before showing/downloading data."""
     return df.drop(columns=[c for c in ('inv_seq', 'lab_seq') if c in df.columns])
 
-
+def fmt_dates(s):
+    """Unique dates in a group, as one comma-separated string."""
+    return ', '.join(sorted({d.strftime('%Y-%m-%d') for d in pd.to_datetime(s).dropna()}))
 # --------------------------------------------------------------------------
 # UI
 # --------------------------------------------------------------------------
@@ -768,7 +771,7 @@ else:
         else:
             for date, grp in df.sort_values('clinic_collected_date').groupby('clinic_collected_date'):
                 st.markdown(f"**{date.date()}**")
-                st.dataframe(grp[['name_matched', 'clinic_id_no', 'clinic_test', 'test_matched']], use_container_width=True, hide_index=True)
+                st.dataframe(grp[['clinic_collected_date', 'clinic_name', 'clinic_id_no', 'clinic_test']], use_container_width=True, hide_index=True)
             st.download_button(
                 "Download unmatched clinic records (CSV)", to_csv_bytes(drop_seq_cols(df)),
                 file_name="unmatched_clinic_records.csv", mime="text/csv"
@@ -785,7 +788,7 @@ else:
         else:
             for date, grp in df.sort_values('lab_collected_date').groupby('lab_collected_date'):
                 st.markdown(f"**{date.date()}**")
-                st.dataframe(grp[['lab_name', 'lab_id_no', 'test']], use_container_width=True, hide_index=True)
+                st.dataframe(grp[['lab_collected_date', 'lab_name', 'lab_id_no', 'test']], use_container_width=True, hide_index=True)
             st.download_button(
                 "Download unmatched lab records (CSV)", to_csv_bytes(drop_seq_cols(df)),
                 file_name="unmatched_lab_records.csv", mime="text/csv"
@@ -795,20 +798,26 @@ else:
     # Tab 5: Name Typo
     # ------------------------------------------------------------------
     with tabs[5]:
+        lab_data, inv_data = res['lab_data'], res['inv_data']
+        clinic_dates = lab_data.groupby('clinic_name')['clinic_collected_date'].agg(fmt_dates).rename('clinic_collected_dates')
+        lab_dates = inv_data.groupby('lab_name')['lab_collected_date'].agg(fmt_dates).rename('lab_collected_dates')
+    
         st.subheader("Fuzzy name mapping applied (clinic name \u2192 lab name)")
         if res['name_mapping']:
-            st.dataframe(
-                pd.DataFrame(res['name_mapping'].items(), columns=['clinic_name', 'mapped_to_lab_name']),
-                use_container_width=True,
-            )
+            df = pd.DataFrame(res['name_mapping'].items(), columns=['clinic_name', 'mapped_to_lab_name'])
+            df = (df.merge(clinic_dates, left_on='clinic_name', right_index=True, how='left')
+                    .merge(lab_dates, left_on='mapped_to_lab_name', right_index=True, how='left'))
+            st.dataframe(df, use_container_width=True, hide_index=True)
         else:
             st.caption("No fuzzy remapping was needed.")
+    
         st.subheader("Names that could not be confidently matched")
         if res['name_unmatched']:
-            st.dataframe(
-                pd.DataFrame(res['name_unmatched'], columns=['clinic_id_no', 'clinic_name', 'closest_lab_name', 'score']),
-                use_container_width=True,
-            )
+            df = pd.DataFrame(res['name_unmatched'],
+                              columns=['clinic_id_no', 'clinic_name', 'closest_lab_name', 'score'])
+            df = (df.merge(clinic_dates, left_on='clinic_name', right_index=True, how='left')
+                    .merge(lab_dates, left_on='closest_lab_name', right_index=True, how='left'))
+            st.dataframe(df, use_container_width=True, hide_index=True)
         else:
             st.caption("None.")
 
@@ -816,21 +825,27 @@ else:
     # Tab 6: ID Typo
     # ------------------------------------------------------------------
     with tabs[6]:
+        lab_data, inv_data = res['lab_data'], res['inv_data']
+        clinic_dates = lab_data.groupby('clinic_id_no')['clinic_collected_date'].agg(fmt_dates).rename('clinic_collected_dates')
+        lab_dates = inv_data.groupby('lab_id_no')['lab_collected_date'].agg(fmt_dates).rename('lab_collected_dates')
+    
         st.subheader("Fuzzy ID mapping applied (clinic ID \u2192 lab ID)")
         st.caption("Matched using the person's name as an anchor, so this only catches ID typos where the name matched correctly.")
         if res['id_mapping']:
-            st.dataframe(
-                pd.DataFrame(res['id_mapping'].items(), columns=['clinic_id_no', 'mapped_to_lab_id_no']),
-                use_container_width=True,
-            )
+            df = pd.DataFrame(res['id_mapping'].items(), columns=['clinic_id_no', 'mapped_to_lab_id_no'])
+            df = (df.merge(clinic_dates, left_on='clinic_id_no', right_index=True, how='left')
+                    .merge(lab_dates, left_on='mapped_to_lab_id_no', right_index=True, how='left'))
+            st.dataframe(df, use_container_width=True, hide_index=True)
         else:
             st.caption("No fuzzy ID remapping was needed.")
+    
         st.subheader("IDs that could not be confidently matched")
         if res['id_unmatched']:
-            st.dataframe(
-                pd.DataFrame(res['id_unmatched'], columns=['name_matched', 'clinic_id_no', 'closest_lab_id_no', 'score']),
-                use_container_width=True,
-            )
+            df = pd.DataFrame(res['id_unmatched'],
+                              columns=['name_matched', 'clinic_id_no', 'closest_lab_id_no', 'score'])
+            df = (df.merge(clinic_dates, left_on='clinic_id_no', right_index=True, how='left')
+                    .merge(lab_dates, left_on='closest_lab_id_no', right_index=True, how='left'))
+            st.dataframe(df, use_container_width=True, hide_index=True)
         else:
             st.caption("None.")
 
@@ -838,21 +853,23 @@ else:
     # Tab 7: Test Typo
     # ------------------------------------------------------------------
     with tabs[7]:
+        lab_data = res['lab_data']
+        record_cols = ['clinic_collected_date', 'name_matched', 'clinic_id_no', 'clinic_test']
+    
         st.subheader("Fuzzy test mapping applied (clinic test \u2192 lab test)")
         st.caption("Matched against all test codes seen on the lab invoice, to catch typos in the clinic's own data entry.")
         if res['test_mapping']:
-            st.dataframe(
-                pd.DataFrame(res['test_mapping'].items(), columns=['clinic_test', 'mapped_to_lab_test']),
-                use_container_width=True,
-            )
+            df = lab_data[lab_data['clinic_test'].isin(res['test_mapping'].keys())]
+            df = df[record_cols + ['test_matched']].rename(columns={'test_matched': 'mapped_to_lab_test'})
+            st.dataframe(df.sort_values('clinic_collected_date'), use_container_width=True, hide_index=True)
         else:
             st.caption("No fuzzy test remapping was needed.")
+    
         st.subheader("Clinic tests that could not be confidently matched")
         if res['test_unmatched']:
-            st.dataframe(
-                pd.DataFrame(res['test_unmatched'], columns=['clinic_test', 'closest_lab_test', 'score']),
-                use_container_width=True,
-            )
+            um = pd.DataFrame(res['test_unmatched'], columns=['clinic_test', 'closest_lab_test', 'score'])
+            df = lab_data[record_cols].merge(um, on='clinic_test', how='inner')
+            st.dataframe(df.sort_values('clinic_collected_date'), use_container_width=True, hide_index=True)
         else:
             st.caption("None.")
 
