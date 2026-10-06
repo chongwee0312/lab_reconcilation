@@ -1,6 +1,6 @@
 streamlit>=1.38
 altair
-pandas
+pandas>=2.0
 numpy
 pdfplumber
 fuzzywuzzy
