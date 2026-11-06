@@ -402,13 +402,16 @@ def build_test_mapping(lab_data, inv_data, score_cutoff=85):
     return mapping, unmatched
 
 
-def match_with_date_shift(lab_data, inv_data):
+DEFAULT_MAX_DAY_SHIFT = 3
+
+
+def match_with_date_shift(lab_data, inv_data, max_day_shift=DEFAULT_MAX_DAY_SHIFT):
     lab = lab_data.copy()
     inv = inv_data.copy()
     lab['clinic_collected_date'] = pd.to_datetime(lab['clinic_collected_date'])
     inv['lab_collected_date'] = pd.to_datetime(inv['lab_collected_date'])
 
-    # Stage 1: same-day outer match
+    # Stage 0: same-day outer match
     same_day = lab.merge(
         inv, left_on=['clinic_collected_date', 'name_matched', 'id_matched', 'test_matched'],
         right_on=['lab_collected_date', 'lab_name', 'lab_id_no', 'test'],
@@ -421,29 +424,37 @@ def match_with_date_shift(lab_data, inv_data):
     unmatched_lab = lab[lab['lab_seq'].isin(lab_only)].copy()
     unmatched_inv = inv[inv['inv_seq'].isin(inv_only)].copy()
 
-    # Stage 2: next-day outer match (only on leftovers from stage 1)
-    if len(unmatched_lab) and len(unmatched_inv):
-        unmatched_lab['collect_date_shifted'] = unmatched_lab['clinic_collected_date'] + pd.Timedelta(days=1)
-        next_day = unmatched_lab.merge(
+    # Stages 1..max_day_shift: cascading shifted-day outer matches. Each stage
+    # only operates on the leftovers of the previous one, so a clinic record
+    # is matched against the earliest lab line within the window, not a later one.
+    shifted_matches = []
+    for day_shift in range(1, max_day_shift + 1):
+        if not (len(unmatched_lab) and len(unmatched_inv)):
+            break
+        unmatched_lab['collect_date_shifted'] = unmatched_lab['clinic_collected_date'] + pd.Timedelta(days=day_shift)
+        shifted = unmatched_lab.merge(
             unmatched_inv, left_on=['collect_date_shifted', 'name_matched', 'id_matched', 'test_matched'],
             right_on=['lab_collected_date', 'lab_name', 'lab_id_no', 'test'],
             how='outer', indicator=True
         )
-        matched_next_day = next_day[next_day['_merge'] == 'both'].drop(columns=['_merge', 'collect_date_shifted'])
-        matched_next_day['match_type'] = 'next_day'
-        lab_only_2 = next_day[next_day['_merge'] == 'left_only']['lab_seq'].dropna().unique()
-        inv_only_2 = next_day[next_day['_merge'] == 'right_only']['inv_seq'].dropna().unique()
-        still_unmatched_lab = unmatched_lab[unmatched_lab['lab_seq'].isin(lab_only_2)].drop(columns=['collect_date_shifted'])
-        still_unmatched_inv = unmatched_inv[unmatched_inv['inv_seq'].isin(inv_only_2)].copy()
-    else:
-        matched_next_day = lab.iloc[0:0]
-        still_unmatched_lab = unmatched_lab
-        still_unmatched_inv = unmatched_inv
+        stage_matched = shifted[shifted['_merge'] == 'both'].drop(columns=['_merge', 'collect_date_shifted'])
+        stage_matched['match_type'] = f'day_+{day_shift}'
+        if len(stage_matched):
+            shifted_matches.append(stage_matched)
 
-    return matched, matched_next_day, still_unmatched_lab, still_unmatched_inv
+        lab_only_n = shifted[shifted['_merge'] == 'left_only']['lab_seq'].dropna().unique()
+        inv_only_n = shifted[shifted['_merge'] == 'right_only']['inv_seq'].dropna().unique()
+        unmatched_lab = unmatched_lab[unmatched_lab['lab_seq'].isin(lab_only_n)].drop(columns=['collect_date_shifted'])
+        unmatched_inv = unmatched_inv[unmatched_inv['inv_seq'].isin(inv_only_n)].copy()
+
+    matched_date_shifted = pd.concat(shifted_matches, ignore_index=True) if shifted_matches else lab.iloc[0:0]
+    still_unmatched_lab = unmatched_lab
+    still_unmatched_inv = unmatched_inv
+
+    return matched, matched_date_shifted, still_unmatched_lab, still_unmatched_inv
 
 
-def flag_z_mismatches(still_unmatched_lab, still_unmatched_inv):
+def flag_z_mismatches(still_unmatched_lab, still_unmatched_inv, max_day_shift=DEFAULT_MAX_DAY_SHIFT):
     inv = still_unmatched_inv.copy()  # restricted to leftover lab rows only
     inv['test_stripped'] = inv['test'].apply(strip_z)
     lab = still_unmatched_lab.copy()
@@ -453,12 +464,14 @@ def flag_z_mismatches(still_unmatched_lab, still_unmatched_inv):
     truly_unmatched_lab_rows = []
     tag_on_notes = []
     used_inv_seq = set()
+    day_offsets = [pd.Timedelta(days=d) for d in range(0, max_day_shift + 1)]
 
     for _, row in lab.iterrows():
+        candidate_dates = [row['clinic_collected_date'] + off for off in day_offsets]
         candidates = inv[
             (inv['lab_name'] == row['name_matched']) &
             (inv['lab_id_no'] == row['id_matched']) &
-            (inv['lab_collected_date'].isin([row['clinic_collected_date'], row['clinic_collected_date'] + pd.Timedelta(days=1)])) &
+            (inv['lab_collected_date'].isin(candidate_dates)) &
             (inv['test_stripped'] == row['test_stripped']) &
             (inv['test'].str.upper() != row['test_matched'].strip().upper()) &
             (~inv['inv_seq'].isin(used_inv_seq))
@@ -539,6 +552,10 @@ with st.sidebar:
         score_cutoff = st.slider("Fuzzy name match cutoff", 50, 100, 85)
         id_score_cutoff = st.slider("Fuzzy ID match cutoff", 50, 100, 90)
         test_score_cutoff = st.slider("Fuzzy clinic test match cutoff", 50, 100, 85)
+        max_day_shift = st.slider(
+            "Date-shift matching window (days)", 0, 7, 3,
+            help="A clinic record is also checked against lab lines collected up to this many days later."
+        )
         exclude_tests_text = st.text_input(
             "Exclude tests (comma separated)", value=", ".join(DEFAULT_EXCLUDE_TESTS)
         )
@@ -596,13 +613,13 @@ if run_btn:
             test_mapping, test_unmatched = build_test_mapping(lab_data, inv_data, score_cutoff=test_score_cutoff)
             lab_data['test_matched'] = lab_data['clinic_test'].replace(test_mapping)
 
-            matched_same_day, matched_next_day, still_unmatched_lab, still_unmatched_inv = match_with_date_shift(
-                lab_data, inv_data
+            matched_same_day, matched_date_shifted, still_unmatched_lab, still_unmatched_inv = match_with_date_shift(
+                lab_data, inv_data, max_day_shift=max_day_shift
             )
             z_resolved, truly_unmatched_lab, truly_unmatched_inv, tag_on_notes = flag_z_mismatches(
-                still_unmatched_lab, still_unmatched_inv
+                still_unmatched_lab, still_unmatched_inv, max_day_shift=max_day_shift
             )
-            check_data = pd.concat([matched_same_day, matched_next_day, z_resolved], ignore_index=True)
+            check_data = pd.concat([matched_same_day, matched_date_shifted, z_resolved], ignore_index=True)
 
             # Merge matched lab amounts back onto the full clinic dataset (by lab_seq),
             # so we can check whether the amounts *lab_data* (clinic side) reconcile to the lab total.
@@ -622,7 +639,8 @@ if run_btn:
             name_mapping=name_mapping, name_unmatched=name_unmatched,
             id_mapping=id_mapping, id_unmatched=id_unmatched,
             test_mapping=test_mapping, test_unmatched=test_unmatched,
-            matched_same_day=matched_same_day, matched_next_day=matched_next_day,
+            matched_same_day=matched_same_day, matched_date_shifted=matched_date_shifted,
+            max_day_shift=max_day_shift,
             z_resolved=z_resolved, tag_on_notes=tag_on_notes,
             truly_unmatched_lab=truly_unmatched_lab, truly_unmatched_inv=truly_unmatched_inv,
             check_data=check_data, lab_data_with_amount=lab_data_with_amount,
@@ -646,7 +664,9 @@ else:
     total_lab = len(res['lab_data'])
     total_inv = len(res['inv_data'])
     n_same_day = len(res['matched_same_day'])
-    n_next_day = len(res['matched_next_day'])
+    n_date_shifted = len(res['matched_date_shifted'])
+    max_day_shift_used = res['max_day_shift']
+    date_shift_label = f"Within {max_day_shift_used}-Day Matches" if max_day_shift_used != 1 else "Next-day Matches"
     n_z = len(res['z_resolved'])
     n_unmatched_lab = len(res['truly_unmatched_lab'])
     n_unmatched_inv = len(res['truly_unmatched_inv'])
@@ -663,14 +683,14 @@ else:
         st.subheader("Match Outcome")
         c1, c2, c3, c4, c5 = st.columns(5)
         c1.metric("Same-day Matches", n_same_day)
-        c2.metric("Next-day Matches", n_next_day)
+        c2.metric(date_shift_label, n_date_shifted)
         c3.metric("Tag-On Mismatches", n_z)
         c4.metric("Unmatched (Clinic)", n_unmatched_lab, delta=f"of {total_lab} clinic records", delta_color="off")
         c5.metric("Unmatched (Lab)", n_unmatched_inv, delta=f"of {total_inv} lab lines", delta_color="off")
 
         match_summary_df = pd.DataFrame([
             {"category": "Same-day Match", "count": n_same_day},
-            {"category": "Next-day Match", "count": n_next_day},
+            {"category": date_shift_label.replace("Matches", "Match"), "count": n_date_shifted},
             {"category": "Tag-On Mismatch", "count": n_z},
             {"category": "Unmatched (Clinic)", "count": n_unmatched_lab},
             {"category": "Unmatched (Lab)", "count": n_unmatched_inv},
@@ -745,9 +765,9 @@ else:
     # Tab 1: Matched
     # ------------------------------------------------------------------
     with tabs[1]:
-        st.subheader("Matched records (same-day + next-day + tag-on mismatches)")
+        st.subheader(f"Matched records (same-day + within {max_day_shift_used}-day shift + tag-on mismatches)")
         matched_all = pd.concat(
-            [res['matched_same_day'], res['matched_next_day'], res['z_resolved']], ignore_index=True
+            [res['matched_same_day'], res['matched_date_shifted'], res['z_resolved']], ignore_index=True
         )
         matched_all = drop_seq_cols(matched_all)
         st.dataframe(matched_all, use_container_width=True)
