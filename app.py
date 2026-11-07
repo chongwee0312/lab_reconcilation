@@ -428,7 +428,8 @@ def match_with_date_shift(lab_data, inv_data, max_day_shift=DEFAULT_MAX_DAY_SHIF
     # only operates on the leftovers of the previous one, so a clinic record
     # is matched against the earliest lab line within the window, not a later one.
     shifted_matches = []
-    for day_shift in range(1, max_day_shift + 1):
+    shifts = [d for k in range(1, max_day_shift + 1) for d in (k, -k)]  # +1, -1, +2, -2, ... nearest first
+    for day_shift in shifts:
         if not (len(unmatched_lab) and len(unmatched_inv)):
             break
         unmatched_lab['collect_date_shifted'] = unmatched_lab['clinic_collected_date'] + pd.Timedelta(days=day_shift)
@@ -438,7 +439,7 @@ def match_with_date_shift(lab_data, inv_data, max_day_shift=DEFAULT_MAX_DAY_SHIF
             how='outer', indicator=True
         )
         stage_matched = shifted[shifted['_merge'] == 'both'].drop(columns=['_merge', 'collect_date_shifted'])
-        stage_matched['match_type'] = f'day_+{day_shift}'
+        stage_matched['match_type'] = f'day_{day_shift:+d}'
         if len(stage_matched):
             shifted_matches.append(stage_matched)
 
@@ -464,7 +465,7 @@ def flag_z_mismatches(still_unmatched_lab, still_unmatched_inv, max_day_shift=DE
     truly_unmatched_lab_rows = []
     tag_on_notes = []
     used_inv_seq = set()
-    day_offsets = [pd.Timedelta(days=d) for d in range(0, max_day_shift + 1)]
+    day_offsets = [pd.Timedelta(days=d) for d in range(-max_day_shift, max_day_shift + 1)]
 
     for _, row in lab.iterrows():
         candidate_dates = [row['clinic_collected_date'] + off for off in day_offsets]
@@ -554,7 +555,7 @@ with st.sidebar:
         test_score_cutoff = st.slider("Fuzzy clinic test match cutoff", 50, 100, 85)
         max_day_shift = st.slider(
             "Date-shift matching window (days)", 0, 7, 3,
-            help="A clinic record is also checked against lab lines collected up to this many days later."
+            help="A clinic record is also checked against lab lines collected up to this many days earlier or later (\u00b1)."
         )
         exclude_tests_text = st.text_input(
             "Exclude tests (comma separated)", value=", ".join(DEFAULT_EXCLUDE_TESTS)
@@ -666,7 +667,7 @@ else:
     n_same_day = len(res['matched_same_day'])
     n_date_shifted = len(res['matched_date_shifted'])
     max_day_shift_used = res['max_day_shift']
-    date_shift_label = f"Within {max_day_shift_used}-Day Matches" if max_day_shift_used != 1 else "Next-day Matches"
+    date_shift_label = f"Within \u00b1{max_day_shift_used}-Day Matches"
     n_z = len(res['z_resolved'])
     n_unmatched_lab = len(res['truly_unmatched_lab'])
     n_unmatched_inv = len(res['truly_unmatched_inv'])
@@ -765,7 +766,7 @@ else:
     # Tab 1: Matched
     # ------------------------------------------------------------------
     with tabs[1]:
-        st.subheader(f"Matched records (same-day + within {max_day_shift_used}-day shift + tag-on mismatches)")
+        st.subheader(f"Matched records (same-day + within \u00b1{max_day_shift_used}-day shift + tag-on mismatches)")
         matched_all = pd.concat(
             [res['matched_same_day'], res['matched_date_shifted'], res['z_resolved']], ignore_index=True
         )
